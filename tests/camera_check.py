@@ -22,7 +22,7 @@ def main():
     adb("shell", "uiautomator", "dump", "/sdcard/fujirelay-check.xml")
     root = ET.fromstring(adb("shell", "cat", "/sdcard/fujirelay-check.xml"))
     for node in root.iter("node"):
-        if node.get("text") == "Проверить камеру":
+        if node.get("text") == "Обновить каталог":
             assert node.get("enabled") == "true", "Wait for the current transfer to finish"
             x1, y1, x2, y2 = map(int, re.findall(r"\d+", node.get("bounds")))
             adb("shell", "input", "tap", str((x1+x2)//2), str((y1+y2)//2))

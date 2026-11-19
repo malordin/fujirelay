@@ -25,13 +25,22 @@ public class ImportService extends Service {
     private RelayDb db;
     private String target;
     private int delivered;
+    private PhotoSelection selection;
+    private static volatile RunControl active;
+    private RunControl control;
+    static volatile int planned, processed;
+    static volatile String currentName="";
+    static void stopTransfer() { cancel=true; RunControl run=active; if(run!=null) run.stop(); }
+
     private record Photo(MtpObjectInfo info, String path) {}
 
     @Override public IBinder onBind(Intent intent) { return null; }
     @Override public int onStartCommand(Intent intent, int flags, int id) {
+        if(intent!=null&&"stop".equals(intent.getAction())){stopTransfer();if(!busy)stopSelf();return START_NOT_STICKY;}
         if (busy) return START_NOT_STICKY;
         busy = true; cancel = false; delivered = 0; failed = false;
         history.setLength(0);
+        control=new RunControl(); active=control; planned=0;processed=0;currentName="";
         getSystemService(NotificationManager.class).createNotificationChannel(
             new NotificationChannel(CHANNEL, "Передача в Immich", NotificationManager.IMPORTANCE_LOW));
         startForeground(1, notification("Подготовка…"));
@@ -43,7 +52,8 @@ public class ImportService extends Service {
         PendingIntent open = PendingIntent.getActivity(this, 0, new Intent(this, MainActivity.class), PendingIntent.FLAG_IMMUTABLE);
         return new Notification.Builder(this, CHANNEL).setContentTitle("FujiRelay")
             .setContentText(message).setSmallIcon(dev.malordin.fuji.R.drawable.ic_relay)
-            .setContentIntent(open).setOngoing(true).build();
+            .setContentIntent(open).setOngoing(true)
+            .addAction(new Notification.Action.Builder(android.R.drawable.ic_menu_close_clear_cancel,"Остановить",PendingIntent.getService(this,1,new Intent(this,ImportService.class).setAction("stop"),PendingIntent.FLAG_IMMUTABLE)).build()).build();
     }
     private void report(String text) {
         Log.i("FujiRelay", text);
@@ -68,6 +78,7 @@ public class ImportService extends Service {
             db = new RelayDb(this);
             queue = new RelayQueue(new File(getFilesDir(), "relay"), db);
             stats();
+            selection=PhotoSelection.load(this);
             if ("scan".equals(mode)) {
                 phase = "Читаю карту";
                 List<Photo> photos = scan();
@@ -78,49 +89,55 @@ public class ImportService extends Service {
                 return;
             }
             Settings settings = new Settings(this);
-            ImmichClient client = new ImmichClient(settings.endpoint, settings.apiKey);
+            ImmichClient client = new ImmichClient(settings.endpoint, settings.apiKey,control);
             phase = "Подключаюсь к Immich";
             target = client.connect();
             report("Immich подключён. Лимит: " + settings.maxFiles + " фото / " + settings.maxBytes / Settings.MIB + " МиБ");
             int limit = "one".equals(mode) ? 1 : Integer.MAX_VALUE;
             drain(client, limit);
-            if (!cancel && queue.count() > 0 && delivered < limit) throw new IOException("В кэше есть файлы без записи в журнале. Передача остановлена для проверки");
             if ("drain".equals(mode) || cancel || delivered >= limit) { finish(); return; }
             phase = "Читаю карту";
             List<Photo> photos = scan();
+            List<Photo> chosen=new ArrayList<>();
+            for(Photo photo:photos) { control.check(); if(selection.matches(key(photo),photo.info.getDateCreated())) chosen.add(photo); }
+            photos=chosen; planned=photos.size(); processed=0;
             int index = 0, skipped = 0;
             // ponytail: sequential batches leave USB idle during upload; overlap one producer/uploader only if measurements justify it.
             while (index < photos.size() && !cancel && delivered < limit) {
                 while (index < photos.size() && !cancel) {
                     Photo photo = photos.get(index);
                     RelayDb.Item item = item(photo);
-                    if (db.confirmed(item.key(), target)) { index++; skipped++; continue; }
+                    if (db.confirmed(item.key(), target)) { index++; skipped++; processed++; continue; }
                     if (!queue.fits(item.size(), Math.min(settings.maxFiles, limit - delivered), settings.maxBytes)) {
                         if (queue.count() == 0) throw new IOException("Недостаточно места для следующего JPEG: увеличь лимит кэша или освободи память. Резерв: 512 МиБ");
                         break;
                     }
-                    phase = "Камера → кэш";
+                    control.check();
+                    phase = "Камера → кэш"; currentName=item.name();
                     report("Сохраняю " + item.name() + " · " + (index + 1) + "/" + photos.size());
                     copy(photo, item);
                     index++; stats();
                 }
                 if (!cancel) {
+                    int before=delivered;
                     drain(client, limit);
-                    if (queue.count() > 0 && delivered < limit) throw new IOException("Не удалось освободить кэш. Новые фотографии не скачиваются");
+                    if(index<photos.size() && delivered==before && !queue.fits(item(photos.get(index)).size(),settings.maxFiles,settings.maxBytes))
+                        throw new IOException("Кэш занят другими кадрами. Включи их в выбор или увеличь лимит кэша");
                 }
             }
             report("Уже доставленные кадры пропущены: " + skipped);
             finish();
         } catch (Exception e) {
-            failed = true;
-            phase = "Передача приостановлена";
+            failed = !control.stopped();
+            phase = control.stopped()?"Остановлено":"Передача приостановлена";
             // Keep credentials and response bodies out of diagnostic logs.
-            report("Ошибка: " + e.getClass().getSimpleName() + ": " + e.getMessage() + "\nНеподтверждённые фотографии остаются в кэше. Можно повторить передачу.");
+            if(control.stopped()) report("Передача остановлена. Очередь сохранена");
+            else report("Ошибка: " + e.getClass().getSimpleName() + ": " + e.getMessage() + "\nНеподтверждённые фотографии остаются в кэше. Можно повторить передачу.");
         } finally {
             if (mtp != null) { mtp.close(); mtp = null; }
             if (db != null) db.close();
             if (wake.isHeld()) wake.release();
-            busy = false;
+            currentName=""; active=null; busy = false;
             stopForeground(STOP_FOREGROUND_REMOVE);
             stopSelf();
         }
@@ -128,10 +145,12 @@ public class ImportService extends Service {
     private void drain(ImmichClient client, int limit) throws Exception {
         for (RelayDb.Item item : queue.pending()) {
             if (cancel || delivered >= limit) return;
-            phase = "Кэш → Immich";
+            control.check();
+            if(!selection.matches(item.key(),item.created())) continue;
+            phase = "В Immich"; currentName=item.name();
             report("Передаю " + item.name() + "…");
             queue.send(item, client, target);
-            delivered++; stats();
+            delivered++; processed++; stats();
             report("Подтверждено в Immich: " + item.name() + ". Место в кэше освобождено");
         }
     }
@@ -169,7 +188,7 @@ public class ImportService extends Service {
                 report("Читаю каталог: " + handles.length + " объектов…");
                 HashMap<Integer, MtpObjectInfo> infos = new HashMap<>();
                 for (int handle : handles) {
-                    if (cancel) break;
+                    control.check(); if (cancel) break;
                     MtpObjectInfo info = mtp.getObjectInfo(handle);
                     if (info == null) throw new IOException("Не удалось прочитать сведения об объекте " + handle);
                     infos.put(handle, info);
@@ -191,7 +210,26 @@ public class ImportService extends Service {
                     }
                 }
             }
+            control.check();
             photos.sort(Comparator.comparingLong((Photo p) -> p.info.getDateCreated()).reversed().thenComparing(Photo::path));
+            if(!cancel) {
+                List<PhotoCatalog.Shot> catalog=new ArrayList<>();
+                for(Photo photo:photos) catalog.add(new PhotoCatalog.Shot(key(photo),photo.info.getName(),photo.info.getDateCreated(),photo.info.getCompressedSizeLong()));
+                PhotoCatalog.save(this,catalog);
+                File previews=new File(getCacheDir(),"previews");
+                if(!previews.isDirectory()&&!previews.mkdirs()) throw new IOException("Кэш превью недоступен");
+                File[] old=previews.listFiles(); if(old!=null) for(File file:old) if(!file.delete()) throw new IOException("Не удалось обновить превью");
+                int count=0;long bytes=0;
+                for(Photo photo:photos) {
+                    control.check();if(cancel) break;
+                    if(!selection.matches(key(photo),photo.info.getDateCreated())||photo.info.getThumbCompressedSizeLong()>256*1024) continue;
+                    if(count>=100||bytes>=8*Settings.MIB) break;
+                    byte[] data=mtp.getThumbnail(photo.info.getObjectHandle()); control.check();
+                    if(data==null||data.length>256*1024||bytes+data.length>8*Settings.MIB) continue;
+                    try(FileOutputStream out=new FileOutputStream(PhotoCatalog.preview(this,key(photo)))){out.write(data);}
+                    count++;bytes+=data.length;
+                }
+            }
             return photos;
     }
     private RelayDb.Item item(Photo photo) throws Exception {
@@ -213,18 +251,25 @@ public class ImportService extends Service {
         File temp = queue.part(item.key());
         try {
             long start = SystemClock.elapsedRealtime();
-            try (ParcelFileDescriptor fd = ParcelFileDescriptor.open(temp, ParcelFileDescriptor.MODE_CREATE | ParcelFileDescriptor.MODE_TRUNCATE | ParcelFileDescriptor.MODE_READ_WRITE)) {
-                if (!mtp.importFile(photo.info.getObjectHandle(), fd)) throw new IOException("Передача с камеры прервалась: " + item.name());
-                if (fd.getStatSize() != item.size()) throw new IOException("Размер полученного JPEG не совпал");
-                android.system.Os.fsync(fd.getFileDescriptor());
+            try (FileOutputStream out=new FileOutputStream(temp)) {
+                byte[] buffer=new byte[256*1024]; long offset=0;
+                while(offset<item.size()) {
+                    control.check();
+                    long wanted=Math.min(buffer.length,item.size()-offset);
+                    long read=mtp.getPartialObject(photo.info.getObjectHandle(),offset,wanted,buffer);
+                    control.check();
+                    if(read<=0||read>wanted) throw new IOException("Передача с камеры прервалась: "+item.name());
+                    out.write(buffer,0,(int)read);offset+=read;
+                }
+                out.getFD().sync();
             }
-            queue.finish(item);
+            control.check(); queue.finish(item);
             report(String.format(Locale.US, "%s · %.1f МБ · %.2f с", item.name(), item.size() / 1e6, (SystemClock.elapsedRealtime() - start) / 1000.0));
         } finally {
             if (temp.exists() && !temp.delete()) report("Не удалось удалить незавершённую копию");
         }
     }
     @Override public void onTimeout(int startId, int fgsType) {
-        cancel = true; stopForeground(STOP_FOREGROUND_REMOVE); stopSelf();
+        stopTransfer(); stopForeground(STOP_FOREGROUND_REMOVE); stopSelf();
     }
 }

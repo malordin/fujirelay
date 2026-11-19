@@ -44,12 +44,20 @@ test after configuring your server.
    an explicit opt-in for a trusted local network.
 6. Tap **⋮ → Передать один кадр**, check the photo in Immich, then start the full relay.
 
-The dashboard has one primary action: start, resume, or pause. Settings and
+Choose **Все**, **Сегодня**, **Вчера**, or an inclusive date range on the dashboard.
+Tap **Выбрать кадры** to select individual files in the photo grid. The selection
+survives app restarts and applies to both camera files and previously cached files.
+Day boundaries use the phone’s time zone; capture timestamps come from the camera.
+
+The dashboard has one primary action: start, resume, or pause. During an operation,
+**Остановить передачу** cancels the active network request and stops USB reading
+between 256 KiB blocks. Unconfirmed queued files remain available for a later run.
+The foreground notification also has a stop action. Settings and
 diagnostics live in the toolbar; the journal expands on tap, and individual
 entries open in a detail dialog with a copy action.
 
 The UI is currently in Russian. Notification permission lets Android show the
-active transfer. Existing cached files can be sent without reconnecting the camera.
+active transfer. Existing cached files can be sent without reconnecting the camera, subject to the current selection.
 
 <details>
 <summary><strong>See the Android interface</strong></summary>
@@ -108,7 +116,10 @@ outside that queue. The official Immich mobile app is not required for the relay
 There is no LRU eviction of unconfirmed photos. A file larger than the byte
 budget pauses the relay; increase the limit to admit it. Lowering the limit below
 the existing cache size does not erase pending photos: existing work drains first.
-The budget covers staged image bytes, not the small database and logs.
+The budget covers staged image bytes, not the small database and logs. Camera
+previews have a separate bound of 100 thumbnails / 8 MiB. The entire catalog is
+selectable; files without a cached thumbnail show their filename and date.
+Refreshing the catalog fetches previews for the current selection.
 
 Receipt history is local to this installation. Clearing app data or uninstalling
 removes it along with unsent cache files. A receipt records past delivery; deleting
@@ -131,7 +142,7 @@ export ANDROID_HOME=/path/to/android-sdk
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
-Package: `dev.malordin.fuji.usb`. Version: `0.3.0`. A debug APK updates the original
+Package: `dev.malordin.fuji.usb`. Version: `0.4.0`. A debug APK updates the original
 USB importer when signed with the same local debug key. No signing secrets or
 Immich credentials belong in the repository.
 
@@ -144,6 +155,10 @@ python3 tests/ui_check.py
 
 # Optional real camera catalog check; grant USB access in the app first:
 python3 tests/camera_check.py
+
+# Optional hardware checks: temporary local reads / cancelling a catalog scan; no upload
+adb shell am instrument -w dev.malordin.fuji.usb/dev.malordin.fuji.CameraReadCheck
+adb shell am instrument -w dev.malordin.fuji.usb/dev.malordin.fuji.StopServiceCheck
 ```
 
 The protocol checks run real SQLite, filesystem, Android Keystore, and HTTP code

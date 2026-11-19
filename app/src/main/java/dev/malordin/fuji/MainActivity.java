@@ -13,6 +13,9 @@ import android.widget.*;
 import java.io.File;
 import java.nio.charset.StandardCharsets;
 import java.util.Locale;
+import java.util.Set;
+import java.time.*;
+import android.transition.*;
 
 public class MainActivity extends Activity {
     private static final String USB_PERMISSION = "dev.malordin.fuji.usb.PERMISSION";
@@ -26,6 +29,16 @@ public class MainActivity extends Activity {
         private long maxBytes=1024*Settings.MIB;
     private String pendingMode, journal="", renderedJournal="";
     private View settingsButton, moreButton;
+    private TextView selectionTitle,selectionDetail,deviceLabel;
+    private LinearLayout dateTabs;
+    private Button stop;
+    private PhotoSelection selection;
+    private boolean pendingPicker;
+    private long pickerRevision;
+    private boolean lastBusy;
+    private String lastUiState="";
+    private ViewGroup animatedBody,footer;
+
     private final BroadcastReceiver permission = new BroadcastReceiver() {
         @Override public void onReceive(Context context, Intent intent) {
             UsbDevice device=camera();
@@ -41,7 +54,7 @@ public class MainActivity extends Activity {
     @android.annotation.SuppressLint("UnspecifiedRegisterReceiverFlag")
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
-        expanded=state!=null && state.getBoolean("journal");
+        expanded=state!=null && state.getBoolean("journal"); selection=PhotoSelection.load(this);
         getWindow().setStatusBarColor(BG); getWindow().setNavigationBarColor(BG);
         LinearLayout root=column(); root.setBackgroundColor(BG);
         root.setOnApplyWindowInsetsListener((view,insets)-> {
@@ -56,14 +69,19 @@ public class MainActivity extends Activity {
         root.addView(bar);
         ScrollView scroll=new ScrollView(this); scroll.setFillViewport(true);
         LinearLayout body=column(); body.setPadding(dp(24),dp(12),dp(24),dp(20));
-        LinearLayout hero=column(); hero.setGravity(Gravity.CENTER); hero.setPadding(0,dp(14),0,dp(24));
-        hero.addView(new CameraArt(this),new LinearLayout.LayoutParams(dp(200),dp(150)));
-        heading=label("X-T30 II",27,TEXT); heading.setTypeface(null,Typeface.BOLD); heading.setGravity(Gravity.CENTER); hero.addView(heading);
-        subtitle=label("",14,MUTED); subtitle.setGravity(Gravity.CENTER); subtitle.setPadding(0,dp(8),0,0); hero.addView(subtitle);
-        progress=new ProgressBar(this,null,android.R.attr.progressBarStyleHorizontal); progress.setIndeterminate(true);
-        progress.setIndeterminateTintList(android.content.res.ColorStateList.valueOf(ACCENT));
-        LinearLayout.LayoutParams pp=new LinearLayout.LayoutParams(dp(100),dp(4)); pp.topMargin=dp(18); hero.addView(progress,pp);
-        body.addView(hero);
+        animatedBody=body;
+        deviceLabel=label("X-T30 II",12,MUTED);deviceLabel.setLetterSpacing(0.08f);body.addView(deviceLabel);gap(body,24);
+        heading=label("Фотографии",34,TEXT);heading.setTypeface(null,Typeface.BOLD);body.addView(heading);gap(body,6);
+        subtitle=label("",13,MUTED);body.addView(subtitle);gap(body,24);
+        LinearLayout choose=column();choose.setPadding(dp(20),dp(22),dp(20),dp(20));choose.setBackground(ripple(CARD,20));choose.setContentDescription("Выбрать фотографии");
+        selectionTitle=label("Все фотографии",24,TEXT);selectionTitle.setTypeface(null,Typeface.BOLD);choose.addView(selectionTitle);gap(choose,8);
+        selectionDetail=label("Обновить каталог камеры",13,MUTED);choose.addView(selectionDetail);gap(choose,24);
+        TextView browse=label("Выбрать кадры  ↗",14,ACCENT);choose.addView(browse);choose.setOnClickListener(v->choosePhotos());body.addView(choose);gap(body,12);
+        HorizontalScrollView dates=new HorizontalScrollView(this);dates.setHorizontalScrollBarEnabled(false);dateTabs=row();dates.addView(dateTabs);body.addView(dates);
+        String[] titles={"Все","Сегодня","Вчера","Период"};String[] modes={"all","today","yesterday","range"};
+        for(int i=0;i<titles.length;i++){String mode=modes[i];TextView chip=label(titles[i],13,MUTED);chip.setPadding(dp(16),dp(12),dp(16),dp(12));chip.setTag(mode);chip.setBackground(ripple(CARD,16));chip.setOnClickListener(v->{if(ImportService.busy)return;if(mode.equals("range")){dateRange();return;}selection=mode.equals("all")?new PhotoSelection("all",0,Long.MAX_VALUE,Set.of()):PhotoSelection.day(mode,LocalDate.now(),ZoneId.systemDefault());selection.save(this);chip.animate().scaleX(0.94f).scaleY(0.94f).setDuration(80).withEndAction(()->chip.animate().scaleX(1).scaleY(1).setDuration(160).start()).start();render();});LinearLayout.LayoutParams cp=new LinearLayout.LayoutParams(-2,-2);cp.rightMargin=dp(8);dateTabs.addView(chip,cp);}
+        gap(body,24);
+        progress=new ProgressBar(this,null,android.R.attr.progressBarStyleHorizontal);progress.setMax(1000);progress.setProgressTintList(android.content.res.ColorStateList.valueOf(ACCENT));body.addView(progress,new LinearLayout.LayoutParams(-1,dp(4)));gap(body,16);
         LinearLayout metrics=row(); metrics.setGravity(Gravity.TOP); metrics.setBackground(shape(CARD,22)); metrics.setPadding(dp(20),dp(20),dp(20),dp(20));
         LinearLayout left=column(); metrics.addView(left,new LinearLayout.LayoutParams(0,-2,1));
         cacheCount=label("0",30,TEXT); left.addView(cacheCount); left.addView(label("В очереди",12,MUTED));
@@ -71,21 +89,23 @@ public class MainActivity extends Activity {
         View divider=new View(this); divider.setBackgroundColor(LINE); LinearLayout.LayoutParams div=new LinearLayout.LayoutParams(dp(1),dp(82)); div.setMargins(dp(20),0,dp(24),0); metrics.addView(divider,div);
         LinearLayout right=column(); metrics.addView(right,new LinearLayout.LayoutParams(0,-2,1));
         delivered=label("0",30,TEXT); right.addView(delivered); right.addView(label("Передано",12,MUTED));
-        body.addView(metrics); gap(body,24);
+        body.addView(metrics); gap(body,20);
         LinearLayout journalHeader=row(); journalHeader.setMinimumHeight(dp(52)); journalHeader.setBackground(ripple(BG,12));
         journalHeader.setPadding(dp(4),0,dp(4),0); journalHeader.setId(View.generateViewId()); journalHeader.setContentDescription("Журнал передачи");
         journalTitle=label("Журнал",14,MUTED); journalHeader.addView(journalTitle,new LinearLayout.LayoutParams(0,-2,1));
         TextView chevron=label("⌄",22,MUTED); journalHeader.addView(chevron);
-        journalHeader.setOnClickListener(v->{ expanded=!expanded; chevron.setText(expanded?"⌃":"⌄"); renderJournal(); }); body.addView(journalHeader);
+        journalHeader.setOnClickListener(v->{ expanded=!expanded; chevron.setText(expanded?"⌃":"⌄"); if(android.animation.ValueAnimator.areAnimatorsEnabled())TransitionManager.beginDelayedTransition(body,new AutoTransition().setDuration(220)); renderJournal(); }); body.addView(journalHeader);
         chevron.setText(expanded?"⌃":"⌄");
         journalRows=column(); body.addView(journalRows); scroll.addView(body); root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
-        LinearLayout footer=column(); footer.setPadding(dp(24),dp(12),dp(24),dp(20));
+        LinearLayout footerLayout=column(); footer=footerLayout; footer.setPadding(dp(24),dp(12),dp(24),dp(20));
         primary=new Button(this); primary.setAllCaps(false); primary.setTextSize(16); primary.setTypeface(null,Typeface.BOLD); primary.setTextColor(BG);
-        primary.setBackground(ripple(ACCENT,18)); primary.setOnClickListener(v->primaryAction()); footer.addView(primary,new LinearLayout.LayoutParams(-1,dp(56))); root.addView(footer);
+        primary.setBackground(ripple(ACCENT,18)); primary.setOnClickListener(v->primaryAction()); footer.addView(primary,new LinearLayout.LayoutParams(-1,dp(56)));
+        stop=new Button(this);stop.setText("Остановить передачу");stop.setAllCaps(false);stop.setTextSize(13);stop.setTextColor(0xffdd9f8f);stop.setBackground(ripple(BG,12));stop.setOnClickListener(v->{ImportService.stopTransfer();render();});footer.addView(stop,new LinearLayout.LayoutParams(-1,dp(48)));stop.setVisibility(View.GONE);root.addView(footer);
         setContentView(root);
         if(Build.VERSION.SDK_INT>=33) registerReceiver(permission,new IntentFilter(USB_PERMISSION),Context.RECEIVER_NOT_EXPORTED);
         else registerReceiver(permission,new IntentFilter(USB_PERMISSION));
         loadState(); render();
+        if(android.animation.ValueAnimator.areAnimatorsEnabled()){body.setAlpha(0);body.setTranslationY(dp(12));body.animate().alpha(1).translationY(0).setDuration(320).start();}
     }
     private void loadState() {
         new Thread(()-> {
@@ -95,6 +115,7 @@ public class MainActivity extends Activity {
                     if(files!=null) for(File file:files) { count++; bytes+=file.length(); }
                     ImportService.cachedFiles=count; ImportService.cachedBytes=bytes; ImportService.confirmedFiles=db.confirmedCount();
                 }
+                PhotoCatalog.load(this);
                 Settings settings=new Settings(this);
                 String saved=""; File file=new File(getFilesDir(),"last-import.log");
                 if(file.isFile()) try(java.io.RandomAccessFile in=new java.io.RandomAccessFile(file,"r")) {
@@ -109,13 +130,28 @@ public class MainActivity extends Activity {
     private void render() {
         if(primary==null) return;
         boolean busy=ImportService.busy, attached=camera()!=null;
-        heading.setText(busy?ImportService.phase:ImportService.failed?"Передача приостановлена":attached?"X-T30 II":ImportService.cachedFiles>0?"Очередь готова":"Подключите камеру");
-        subtitle.setText(busy?ImportService.cancel?"Завершаем текущую операцию":"Передача фотографий":ImportService.failed?"Подробности в журнале":!configured?"Immich не подключён":attached?"Готова к передаче":ImportService.cachedFiles>0?"Очередь можно отправить без камеры":"");
-        progress.setVisibility(busy?View.VISIBLE:View.INVISIBLE);
+        if((selection.mode.equals("today")||selection.mode.equals("yesterday")) && !busy) selection=PhotoSelection.load(this);
+        String uiState=busy+"|"+attached+"|"+ImportService.cancel+"|"+ImportService.failed+"|"+ImportService.phase+"|"+ImportService.currentName+"|"+ImportService.cachedFiles+"|"+ImportService.cachedBytes+"|"+ImportService.confirmedFiles+"|"+ImportService.processed+"|"+ImportService.planned+"|"+ImportService.status.hashCode()+"|"+configured+"|"+maxBytes+"|"+selection.mode+"|"+selection.from+"|"+selection.until+"|"+selection.keys.hashCode()+"|"+PhotoCatalog.revision;
+        if(uiState.equals(lastUiState))return;
+        lastUiState=uiState;
+        if(lastBusy!=busy && android.animation.ValueAnimator.areAnimatorsEnabled())TransitionManager.beginDelayedTransition(animatedBody,new AutoTransition().setDuration(200));
+        lastBusy=busy;
+        deviceLabel.setText(attached?"●  X-T30 II":"○  КАМЕРА НЕ ПОДКЛЮЧЕНА");
+        heading.setText(busy?ImportService.phase:ImportService.failed?"Нужна проверка":"Фотографии");
+        subtitle.setText(busy?ImportService.currentName.isEmpty()?"Читаем каталог":ImportService.currentName:ImportService.failed?"Подробности в журнале":!configured?"Подключите Immich, чтобы начать передачу":"Выберите кадры для передачи");
+        progress.setVisibility(busy?View.VISIBLE:View.GONE);
+        progress.setIndeterminate(busy&&ImportService.planned==0);
+        if(ImportService.planned>0)progress.setProgress(Math.min(1000,ImportService.processed*1000/ImportService.planned),true);
+        if(!selectionTitle.getText().toString().equals(selection.title())){selectionTitle.setText(selection.title());if(android.animation.ValueAnimator.areAnimatorsEnabled()){selectionTitle.setAlpha(0.3f);selectionTitle.animate().alpha(1).setDuration(180).start();}}
+        long selectedBytes=0;int selectedCount=0;for(var shot:PhotoCatalog.shots)if(selection.matches(shot.key(),shot.created())){selectedCount++;selectedBytes+=shot.size();}
+        selectionDetail.setText(PhotoCatalog.shots.isEmpty()?"Каталог ещё не прочитан":selectedCount+" кадров · "+size(selectedBytes));
+        for(int i=0;i<dateTabs.getChildCount();i++){TextView tab=(TextView)dateTabs.getChildAt(i);boolean chosen=selection.mode.equals(tab.getTag());tab.setTextColor(chosen?BG:MUTED);tab.setBackground(ripple(chosen?ACCENT:CARD,16));tab.setEnabled(!busy);}
+        stop.setVisibility(busy?View.VISIBLE:View.GONE);
+        if(pendingPicker&&!busy&&!ImportService.cancel&&PhotoCatalog.revision>pickerRevision){pendingPicker=false;new PhotoPicker(this,()->{selection=PhotoSelection.load(this);render();}).show();}
         cacheCount.setText(String.valueOf(ImportService.cachedFiles));
         cacheSize.setText(size(ImportService.cachedBytes)+" / "+size(maxBytes));
         delivered.setText(String.valueOf(ImportService.confirmedFiles));
-        primary.setText(busy?ImportService.cancel?"Останавливаем…":"Приостановить":!configured?"Подключить Immich":ImportService.cachedFiles>0?"Продолжить":"Передать фотографии");
+        primary.setText(busy?ImportService.cancel?"Завершаем…":"Пауза":!configured?"Подключить Immich":ImportService.cachedFiles>0?"Продолжить":"Передать фотографии");
         primary.setEnabled(busy?!ImportService.cancel:!configured||attached||ImportService.cachedFiles>0);
         primary.setAlpha(primary.isEnabled()?1f:0.4f); settingsButton.setEnabled(!busy); moreButton.setEnabled(!busy);
         if(!ImportService.status.isEmpty()) journal=ImportService.status;
@@ -136,6 +172,15 @@ public class MainActivity extends Activity {
             LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2); lp.bottomMargin=dp(6); journalRows.addView(item,lp);
         }
     }
+    private void choosePhotos() {
+        if(ImportService.busy) return;
+        if(PhotoCatalog.shots.isEmpty()){pendingPicker=true;pickerRevision=PhotoCatalog.revision;connect("scan");}
+        else new PhotoPicker(this,()->{selection=PhotoSelection.load(this);render();}).show();
+    }
+    private void dateRange() {
+        LocalDate today=LocalDate.now();
+        new DatePickerDialog(this,(v,y,m,d)->{LocalDate first=LocalDate.of(y,m+1,d);DatePickerDialog end=new DatePickerDialog(this,(vv,yy,mm,dd)->{try{selection=PhotoSelection.range("range",first,LocalDate.of(yy,mm+1,dd),ZoneId.systemDefault());selection.save(this);render();}catch(IllegalArgumentException e){message("Период",e.getMessage());}},y,m,d);end.setTitle("По какую дату");end.show();},today.getYear(),today.getMonthValue()-1,today.getDayOfMonth()).show();
+    }
     private void primaryAction() {
         if(ImportService.busy) { ImportService.cancel=true; render(); return; }
         if(!configured) { settings(); return; }
@@ -143,7 +188,7 @@ public class MainActivity extends Activity {
     }
     private void more(View anchor) {
         PopupMenu menu=new PopupMenu(this,anchor);
-        menu.getMenu().add("Проверить камеру").setOnMenuItemClickListener(item->{connect("scan");return true;});
+        menu.getMenu().add("Обновить каталог").setOnMenuItemClickListener(item->{pendingPicker=true;pickerRevision=PhotoCatalog.revision;connect("scan");return true;});
         menu.getMenu().add("Передать один кадр").setOnMenuItemClickListener(item->{if(!configured) settings(); else connect("one");return true;});
         menu.show();
     }
@@ -168,7 +213,7 @@ public class MainActivity extends Activity {
         Button save=new Button(this); save.setText("Сохранить"); save.setAllCaps(false); save.setTextColor(BG); save.setBackground(ripple(ACCENT,18));
         save.setOnClickListener(v->{try {Settings.save(this,url.getText().toString(),key.getText().toString(),Integer.parseInt(count.getText().toString()),Math.multiplyExact(Long.parseLong(bytes.getText().toString()),Settings.MIB),http.isChecked()); loadState(); dialog.dismiss();}catch(Exception e){Toast.makeText(this,e.getMessage()==null?"Проверь значения":e.getMessage(),Toast.LENGTH_LONG).show();}});
         screen.addView(save,new LinearLayout.LayoutParams(-1,dp(56))); dialog.setContentView(screen); dialog.getWindow().addFlags(WindowManager.LayoutParams.FLAG_SECURE);
-        dialog.show(); dialog.getWindow().setLayout(-1,-1);
+        dialog.getWindow().setWindowAnimations(R.style.SheetAnimation);dialog.show(); dialog.getWindow().setLayout(-1,-1);
     }
     private EditText input(LinearLayout parent,String name,String hint,boolean secret,boolean number) {
         gap(parent,14); parent.addView(label(name,12,MUTED)); gap(parent,6);
@@ -212,19 +257,6 @@ public class MainActivity extends Activity {
             if(type.equals("more")) { paint.setStyle(Paint.Style.FILL); for(int y=-6;y<=6;y+=6) canvas.drawCircle(0,y,1.5f,paint); }
             else { canvas.drawCircle(0,0,7,paint); canvas.drawCircle(0,0,2.5f,paint); for(int i=0;i<8;i++){canvas.save();canvas.rotate(i*45);canvas.drawLine(0,-7,0,-10,paint);canvas.restore();} }
             canvas.restore();
-        }
-    }
-    private class CameraArt extends View {
-        private final Paint paint=new Paint(Paint.ANTI_ALIAS_FLAG);
-        CameraArt(Context context) { super(context); setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO); }
-        @Override protected void onDraw(Canvas c) {
-            super.onDraw(c); c.save(); c.translate(getWidth()/2f,getHeight()/2f); c.scale(getResources().getDisplayMetrics().density,getResources().getDisplayMetrics().density);
-            paint.setStyle(Paint.Style.FILL); paint.setColor(CARD); c.drawCircle(0,0,64,paint);
-            paint.setStyle(Paint.Style.STROKE); paint.setStrokeWidth(1); paint.setColor(LINE); c.drawCircle(0,0,70,paint);
-            paint.setColor(ACCENT); paint.setStrokeWidth(2); c.drawRoundRect(-44,-24,44,30,8,8,paint);
-            Path top=new Path();top.moveTo(-23,-24);top.lineTo(-17,-34);top.lineTo(7,-34);top.lineTo(14,-24);c.drawPath(top,paint);
-            c.drawCircle(0,3,19,paint); paint.setStrokeWidth(1); paint.setColor(MUTED); c.drawCircle(0,3,13,paint);c.drawLine(25,-13,32,-13,paint);
-            paint.setStyle(Paint.Style.FILL); paint.setColor(ACCENT); c.drawCircle(0,3,4,paint); c.restore();
         }
     }
 }

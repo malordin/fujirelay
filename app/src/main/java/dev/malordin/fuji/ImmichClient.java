@@ -11,7 +11,9 @@ final class ImmichClient {
     private final String endpoint, apiKey;
     private String userId;
     private int major;
-    ImmichClient(String endpoint, String apiKey) { this.endpoint = endpoint; this.apiKey = apiKey; }
+    final RunControl control;
+    ImmichClient(String endpoint, String apiKey) { this(endpoint,apiKey,new RunControl()); }
+    ImmichClient(String endpoint,String apiKey,RunControl control) { this.endpoint=endpoint;this.apiKey=apiKey;this.control=control; }
 
     String connect() throws Exception {
         if (endpoint.isEmpty() || apiKey.isEmpty()) throw new IOException("Сначала укажи сервер и API-ключ в настройках Immich");
@@ -68,14 +70,15 @@ final class ImmichClient {
                 out.write(prefix);
                 byte[] buffer = new byte[128 * 1024];
                 int length;
-                while ((length = in.read(buffer)) != -1) out.write(buffer, 0, length);
+                while ((length = in.read(buffer)) != -1) { control.check(); out.write(buffer, 0, length); }
+                control.check();
                 out.write(suffix);
             }
             JSONObject response = response(connection);
             if (!"created".equals(response.optString("status")) && !"duplicate".equals(response.optString("status")))
                 throw new IOException("Immich не подтвердил загрузку");
             return response.getString("id");
-        } finally { connection.disconnect(); }
+        } finally { control.detach(connection); connection.disconnect(); }
     }
 
     private static void field(StringBuilder out, String boundary, String name, String value) {
@@ -83,7 +86,9 @@ final class ImmichClient {
             .append(name).append("\"\r\n\r\n").append(value).append("\r\n");
     }
     private HttpURLConnection open(String method, String path) throws Exception {
+        control.check();
         HttpURLConnection connection = (HttpURLConnection)new URL(endpoint + path).openConnection();
+        control.attach(connection);
         connection.setRequestMethod(method);
         connection.setConnectTimeout(15000); connection.setReadTimeout(60000);
         connection.setInstanceFollowRedirects(false);
@@ -102,15 +107,18 @@ final class ImmichClient {
                 try (OutputStream out = connection.getOutputStream()) { out.write(data); }
             }
             return response(connection);
-        } finally { connection.disconnect(); }
+        } finally { control.detach(connection); connection.disconnect(); }
     }
-    private static JSONObject response(HttpURLConnection connection) throws Exception {
+    private JSONObject response(HttpURLConnection connection) throws Exception {
+        control.check();
         int code = connection.getResponseCode();
+        control.check();
         if (code < 200 || code >= 300) throw new IOException("Immich: HTTP " + code + ". Кэш сохранён; проверь адрес и права API-ключа");
         try (InputStream in = connection.getInputStream(); ByteArrayOutputStream out = new ByteArrayOutputStream()) {
             byte[] buffer = new byte[8192];
             int count;
             while ((count = in.read(buffer)) != -1) {
+                control.check();
                 if (out.size() + count > 1024 * 1024) throw new IOException("Слишком большой ответ Immich");
                 out.write(buffer, 0, count);
             }

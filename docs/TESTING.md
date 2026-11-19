@@ -1,5 +1,24 @@
 # Verification notes
 
+## 2026-11-19 · 0.4.0 selection, animation, full stop
+
+- Build and Android lint passed. **23** device-side protocol checks passed,
+  including stalled HTTP cancellation, retained cache, date boundaries, explicit
+  keys, and a 23-hour daylight-saving day.
+- Real X-T30 II: block-wise read of an 8,460,368-byte JPEG took 490 ms and
+  matched the SHA-1 of Android’s native full-file import. Cancellation was
+  checked after the first 256 KiB block. Temporary test copies were removed.
+- The actual on-screen Stop button cancelled a read-only catalog operation
+  in 3 ms in the measured run; queued file count and byte count were unchanged.
+  This timing is one observation, not a bound on every USB/device operation.
+- UI checks passed for today/yesterday controls, an individual photo selection
+  persisting through process restart, journal entries, settings and diagnostics.
+- Camera catalog and bounded previews were read without uploading photo data
+  to any server. Private photo previews are not included in repository artwork.
+- New transitions respect Android’s animation duration setting. Idle rendering
+  is skipped when state has not changed, avoiding continuous accessibility events.
+
+
 ## 2026-11-19 · 0.3.0 interface
 
 - Build and Android lint passed; the updated APK was installed on Pixel 7 Pro.

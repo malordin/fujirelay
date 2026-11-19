@@ -51,11 +51,14 @@ final class RelayQueue {
         return result;
     }
     void send(RelayDb.Item item, ImmichClient client, String target) throws Exception {
+        client.control.check();
         if (!db.confirmed(item.key(), target)) {
             if (!checksum(file(item.key())).equals(item.checksum())) throw new IOException("SHA-1 локального JPEG изменился. Кэш сохранён");
             String id = client.uploadAndVerify(item, file(item.key()));
+            client.control.check();
             db.confirm(item, target, id); // Commit the receipt BEFORE deleting the only phone copy.
         }
+        client.control.check();
         cleanup(item, target);
     }
     void cleanup(RelayDb.Item item, String target) throws IOException {

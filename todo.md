@@ -25,6 +25,11 @@ phone storage and explicit delivery receipts.
 
 ## Experience
 
+- [x] Today/yesterday/inclusive date range and persistent individual file selection.
+- [x] Full stop for network requests and chunked USB reads; stop action in notification.
+- [x] Photo grid with a bounded preview cache and animated transitions.
+- [ ] Fetch more previews on demand while scrolling older catalog entries.
+
 - [ ] English localization and Android string resources.
 - [x] Compact dashboard with one start/resume/pause action, toolbar settings, and a collapsible journal.
 - [ ] Network policy controls: Wi-Fi only / mobile data allowed.

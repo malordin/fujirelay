@@ -10,6 +10,7 @@ import json
 import subprocess
 import threading
 import uuid
+import time
 from email.parser import BytesParser
 from email.policy import default
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -47,6 +48,8 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Location", "/should-never-follow")
             self.end_headers()
             return
+        if route == "slow":
+            time.sleep(10)
         result = {**asset, "ownerId": "test-owner", "isTrashed": route == "trashed", "isOffline": route == "offline"}
         if route == "wrong-hash":
             result["checksum"] = "not-the-same-hash"

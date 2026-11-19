@@ -122,6 +122,28 @@ public final class ProtocolCheck extends Instrumentation {
             expect(queue.count() == 99 && queue.fits(128,100,1024 * 1024), "Verified cleanup allows one replacement");
             fixture(); expect(queue.count() == 100, "Replacement stays within cap");
             pass("Full 100-file cache: failure preserves all files; confirmed upload frees one slot");
+            java.time.ZoneId zone=java.time.ZoneId.of("Asia/Yekaterinburg");
+            java.time.LocalDate today=java.time.LocalDate.of(2026,11,19);
+            PhotoSelection todayFilter=PhotoSelection.day("today",today,zone);
+            PhotoSelection yesterday=PhotoSelection.day("yesterday",today,zone);
+            expect(todayFilter.matches("any",todayFilter.from)&&!todayFilter.matches("any",todayFilter.until),"Half-open today boundaries");
+            expect(yesterday.until==todayFilter.from&&!yesterday.matches("any",todayFilter.from),"Yesterday excludes today");
+            java.time.ZoneId dst=java.time.ZoneId.of("Europe/Berlin");
+            PhotoSelection spring=PhotoSelection.range("range",java.time.LocalDate.of(2026,3,29),java.time.LocalDate.of(2026,3,29),dst);
+            expect(spring.until-spring.from==23*60*60*1000L,"DST day is not assumed to be 24 hours");
+            PhotoSelection manual=new PhotoSelection("manual",0,Long.MAX_VALUE,java.util.Set.of("picked"));
+            expect(manual.matches("picked",0)&&!manual.matches("excluded",todayFilter.from),"Explicit keys override date");
+            pass("Today, yesterday, inclusive date range, DST, explicit file selection");
+            RelayDb.Item stopped=fixture();
+            RunControl cancellation=new RunControl();
+            ImmichClient slow=new ImmichClient(base+"/slow/api","synthetic-test-key",cancellation);String slowTarget=slow.connect();
+            java.util.concurrent.atomic.AtomicReference<Throwable> failure=new java.util.concurrent.atomic.AtomicReference<>();
+            Thread upload=new Thread(()->{try{queue.send(stopped,slow,slowTarget);}catch(Throwable e){failure.set(e);}});
+            upload.start(); Thread.sleep(500);long stopAt=System.nanoTime();cancellation.stop();upload.join(2500);
+            expect(!upload.isAlive()&&failure.get()!=null,"Stop interrupts a stalled HTTP request");
+            expect(queue.file(stopped.key()).exists()&&!db.confirmed(stopped.key(),slowTarget),"Cancelled upload keeps cache without a receipt");
+            expect((System.nanoTime()-stopAt)<2500_000_000L,"Network stop within 2.5 seconds");
+            pass("Full stop interrupts stalled HTTP and retains unconfirmed cache");
             result.putString("stream", "\nPASS " + passed.size() + " checks\n" + String.join("\n", passed) + "\n");
             finish(-1, result);
         } catch (Throwable error) {

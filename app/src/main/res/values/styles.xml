@@ -6,4 +6,5 @@
         <item name="android:windowLightStatusBar">false</item>
         <item name="android:windowLightNavigationBar">false</item>
     </style>
+<style name="SheetAnimation"><item name="android:windowEnterAnimation">@anim/sheet_enter</item><item name="android:windowExitAnimation">@anim/sheet_exit</item></style>
 </resources>
