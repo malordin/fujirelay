@@ -1,5 +1,30 @@
 # Verification notes
 
+## 2026-11-19 · 0.4.1 console and dialog layout
+
+- Build and lint passed. **24 protocol checks** passed, including date/time
+  conversion across midnight and timestamps on each line of a multiline message.
+- **9 geometry checks** passed on Pixel 7 Pro: portrait and landscape, 160% font
+  scale, photo toolbar/grid/footer, settings with the keyboard visible, full
+  terminal and calendar. Controls are checked against actual system-bar, cutout
+  and IME insets; the editable settings viewport remains usable above the keyboard.
+- Full-screen dialogs now share one inset policy and are dismissed when their
+  owning Activity is destroyed. Rotation no longer retains old dialog windows.
+- Photo previews are square and columns adapt to available width/font scale.
+  Unselected photos have no badge; selected photos use a vector marker and border,
+  with no Unicode circle/check glyphs.
+- Terminal is one selectable monospace text surface in a bounded scroll viewport;
+  the inline surface opens the full console. New records include local timestamps.
+
+```sh
+adb shell am instrument -w dev.malordin.fuji.usb/dev.malordin.fuji.LayoutCheck
+```
+
+The geometry harness requires Android 11+ and an idle app. It temporarily rotates
+the Activity, tests a larger-font context, opens/closes windows and the keyboard,
+and restores orientation. It does not upload files or save server/selection settings.
+
+
 ## 2026-11-19 · 0.4.0 selection, animation, full stop
 
 - Build and Android lint passed. **23** device-side protocol checks passed,

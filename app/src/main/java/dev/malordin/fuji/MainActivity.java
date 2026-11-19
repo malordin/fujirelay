@@ -20,14 +20,18 @@ import android.transition.*;
 public class MainActivity extends Activity {
     private static final String USB_PERMISSION = "dev.malordin.fuji.usb.PERMISSION";
     private static final int BG=0xff101213, CARD=0xff1b1e20, LINE=0xff303436, TEXT=0xfff2efe9, MUTED=0xff909798, ACCENT=0xffeabb98;
+    private final java.util.ArrayList<Dialog> dialogs=new java.util.ArrayList<>();
+    void trackDialog(Dialog dialog){dialogs.add(dialog);}
+    void untrackDialog(Dialog dialog){dialogs.remove(dialog);}
     private final Handler handler = new Handler(Looper.getMainLooper());
     private TextView heading, subtitle, cacheCount, cacheSize, delivered, journalTitle;
     private LinearLayout journalRows;
+    private LogTerminal terminal;
     private Button primary;
     private ProgressBar progress;
     private boolean expanded, configured;
         private long maxBytes=1024*Settings.MIB;
-    private String pendingMode, journal="", renderedJournal="";
+    private String pendingMode, journal="";
     private View settingsButton, moreButton;
     private TextView selectionTitle,selectionDetail,deviceLabel;
     private LinearLayout dateTabs;
@@ -96,9 +100,9 @@ public class MainActivity extends Activity {
         TextView chevron=label("⌄",22,MUTED); journalHeader.addView(chevron);
         journalHeader.setOnClickListener(v->{ expanded=!expanded; chevron.setText(expanded?"⌃":"⌄"); if(android.animation.ValueAnimator.areAnimatorsEnabled())TransitionManager.beginDelayedTransition(body,new AutoTransition().setDuration(220)); renderJournal(); }); body.addView(journalHeader);
         chevron.setText(expanded?"⌃":"⌄");
-        journalRows=column(); body.addView(journalRows); scroll.addView(body); root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
+        journalRows=column(); terminal=new LogTerminal(this); terminal.openOnTap(this::openLog);journalRows.addView(terminal,new LinearLayout.LayoutParams(-1,dp(224))); body.addView(journalRows); scroll.addView(body); root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
         LinearLayout footerLayout=column(); footer=footerLayout; footer.setPadding(dp(24),dp(12),dp(24),dp(20));
-        primary=new Button(this); primary.setAllCaps(false); primary.setTextSize(16); primary.setTypeface(null,Typeface.BOLD); primary.setTextColor(BG);
+        primary=new Button(this); primary.setAllCaps(false);primary.setIncludeFontPadding(false);primary.setPadding(dp(16),0,dp(16),0); primary.setTextSize(16); primary.setTypeface(null,Typeface.BOLD); primary.setTextColor(BG);
         primary.setBackground(ripple(ACCENT,18)); primary.setOnClickListener(v->primaryAction()); footer.addView(primary,new LinearLayout.LayoutParams(-1,dp(56)));
         stop=new Button(this);stop.setText("Остановить передачу");stop.setAllCaps(false);stop.setTextSize(13);stop.setTextColor(0xffdd9f8f);stop.setBackground(ripple(BG,12));stop.setOnClickListener(v->{ImportService.stopTransfer();render();});footer.addView(stop,new LinearLayout.LayoutParams(-1,dp(48)));stop.setVisibility(View.GONE);root.addView(footer);
         setContentView(root);
@@ -123,7 +127,7 @@ public class MainActivity extends Activity {
                     saved=new String(bytes,StandardCharsets.UTF_8); if(offset>0) saved=saved.substring(saved.indexOf('\n')+1);
                 }
                 String log=saved;
-                handler.post(()-> { if(isDestroyed()) return; configured=!settings.endpoint.isEmpty(); maxBytes=settings.maxBytes; if(ImportService.status.isEmpty()) journal=log; render(); });
+                handler.post(()-> { if(isDestroyed()) return; configured=!settings.endpoint.isEmpty(); maxBytes=settings.maxBytes; if(ImportService.status.isEmpty()) journal=log; lastUiState=""; render(); });
             } catch(Exception error) { handler.post(()->{ if(!isDestroyed()) message("Настройки", "Не удалось прочитать настройки. Сохрани их заново."); }); }
         },"relay-dashboard").start();
     }
@@ -160,17 +164,17 @@ public class MainActivity extends Activity {
     }
     private void renderJournal() {
         journalRows.setVisibility(expanded?View.VISIBLE:View.GONE);
-        if(!expanded || renderedJournal.equals(journal) && journalRows.getChildCount()>0) return;
-        renderedJournal=journal; journalRows.removeAllViews();
-        if(journal.isBlank()) { TextView empty=label("Пока пусто",13,MUTED); empty.setPadding(dp(4),dp(8),0,dp(16)); journalRows.addView(empty); return; }
-        String[] lines=journal.strip().split("\\n");
-        for(int i=lines.length-1;i>=Math.max(0,lines.length-30);i--) {
-            String entry=lines[i]; if(entry.isBlank()) continue;
-            TextView item=label(entry,12,entry.startsWith("Ошибка:")?ACCENT:MUTED); item.setMaxLines(2); item.setEllipsize(android.text.TextUtils.TruncateAt.END);
-            item.setMinHeight(dp(48)); item.setGravity(Gravity.CENTER_VERTICAL); item.setPadding(dp(12),dp(10),dp(12),dp(10)); item.setBackground(ripple(CARD,10));
-            item.setOnClickListener(v->{ TextView detail=label(entry,14,TEXT); detail.setTextIsSelectable(true); detail.setPadding(dp(24),dp(20),dp(24),dp(12)); new AlertDialog.Builder(this).setView(detail).setPositiveButton("Закрыть",null).setNeutralButton("Копировать",(d,w)->getSystemService(android.content.ClipboardManager.class).setPrimaryClip(ClipData.newPlainText("FujiRelay",entry))).show(); });
-            LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2); lp.bottomMargin=dp(6); journalRows.addView(item,lp);
-        }
+        if(expanded)terminal.setLog(journal);
+    }
+    private ScreenDialog openLog(){
+        ScreenDialog dialog=new ScreenDialog(this);
+        LinearLayout screen=column();screen.setPadding(dp(16),dp(8),dp(16),dp(16));
+        LinearLayout bar=row();TextView title=label("Журнал",22,TEXT);bar.addView(title,new LinearLayout.LayoutParams(0,-2,1));
+        TextView copy=label("Копировать",13,ACCENT);copy.setGravity(Gravity.CENTER);copy.setMinHeight(dp(48));copy.setPadding(dp(12),0,dp(12),0);copy.setOnClickListener(v->getSystemService(android.content.ClipboardManager.class).setPrimaryClip(ClipData.newPlainText("FujiRelay",ImportService.status.isEmpty()?journal:ImportService.status)));bar.addView(copy);
+        TextView close=label("Закрыть",13,MUTED);close.setGravity(Gravity.CENTER);close.setMinHeight(dp(48));close.setPadding(dp(12),0,dp(12),0);close.setOnClickListener(v->dialog.dismiss());bar.addView(close);screen.addView(bar);
+        LogTerminal full=new LogTerminal(this);screen.addView(full,new LinearLayout.LayoutParams(-1,0,1));full.setLog(journal);
+        Handler updates=new Handler(Looper.getMainLooper());Runnable tick=new Runnable(){@Override public void run(){if(!dialog.isShowing())return;full.setLog(ImportService.status.isEmpty()?journal:ImportService.status);updates.postDelayed(this,1000);}};
+        dialog.setOnDismissListener(d->updates.removeCallbacksAndMessages(null));dialog.setContentView(screen);dialog.show();updates.post(tick);return dialog;
     }
     private void choosePhotos() {
         if(ImportService.busy) return;
@@ -192,8 +196,8 @@ public class MainActivity extends Activity {
         menu.getMenu().add("Передать один кадр").setOnMenuItemClickListener(item->{if(!configured) settings(); else connect("one");return true;});
         menu.show();
     }
-    private void settings() {
-        Dialog dialog=new Dialog(this,dev.malordin.fuji.R.style.AppTheme);
+    private ScreenDialog settings() {
+        ScreenDialog dialog=new ScreenDialog(this);
         LinearLayout screen=column(); screen.setBackgroundColor(BG); screen.setPadding(dp(24),dp(20),dp(24),dp(20));
         LinearLayout toolbar=row(); TextView title=label("Настройки",24,TEXT); title.setTypeface(null,Typeface.BOLD); toolbar.addView(title,new LinearLayout.LayoutParams(0,-2,1));
         TextView close=label("Закрыть",14,ACCENT); close.setGravity(Gravity.CENTER); close.setMinHeight(dp(48)); close.setMinWidth(dp(64)); close.setBackground(ripple(BG,12)); close.setOnClickListener(v->dialog.dismiss()); toolbar.addView(close); screen.addView(toolbar);
@@ -210,10 +214,10 @@ public class MainActivity extends Activity {
         http.setOnCheckedChangeListener((view,checked)->warning.setVisibility(checked?View.VISIBLE:View.GONE));
         try { Settings settings=new Settings(this); url.setText(settings.endpoint); key.setText(settings.apiKey); count.setText(String.valueOf(settings.maxFiles)); bytes.setText(String.valueOf(settings.maxBytes/Settings.MIB)); http.setChecked(settings.endpoint.startsWith("http://")); } catch(Exception ignored) { key.setText(""); }
         scroll.addView(form); screen.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
-        Button save=new Button(this); save.setText("Сохранить"); save.setAllCaps(false); save.setTextColor(BG); save.setBackground(ripple(ACCENT,18));
+        Button save=new Button(this); save.setText("Сохранить");save.setIncludeFontPadding(false);save.setPadding(dp(16),0,dp(16),0); save.setAllCaps(false); save.setTextColor(BG); save.setBackground(ripple(ACCENT,18));
         save.setOnClickListener(v->{try {Settings.save(this,url.getText().toString(),key.getText().toString(),Integer.parseInt(count.getText().toString()),Math.multiplyExact(Long.parseLong(bytes.getText().toString()),Settings.MIB),http.isChecked()); loadState(); dialog.dismiss();}catch(Exception e){Toast.makeText(this,e.getMessage()==null?"Проверь значения":e.getMessage(),Toast.LENGTH_LONG).show();}});
         screen.addView(save,new LinearLayout.LayoutParams(-1,dp(56))); dialog.setContentView(screen); dialog.getWindow().addFlags(WindowManager.LayoutParams.FLAG_SECURE);
-        dialog.getWindow().setWindowAnimations(R.style.SheetAnimation);dialog.show(); dialog.getWindow().setLayout(-1,-1);
+        dialog.getWindow().setWindowAnimations(R.style.SheetAnimation);dialog.show(); dialog.getWindow().setLayout(-1,-1);return dialog;
     }
     private EditText input(LinearLayout parent,String name,String hint,boolean secret,boolean number) {
         gap(parent,14); parent.addView(label(name,12,MUTED)); gap(parent,6);
@@ -247,7 +251,7 @@ public class MainActivity extends Activity {
     @Override protected void onResume() { super.onResume(); handler.post(refresh); }
     @Override protected void onPause() { handler.removeCallbacks(refresh); super.onPause(); }
     @Override protected void onSaveInstanceState(Bundle out) { out.putBoolean("journal",expanded); super.onSaveInstanceState(out); }
-    @Override protected void onDestroy() { handler.removeCallbacksAndMessages(null); unregisterReceiver(permission); super.onDestroy(); }
+    @Override protected void onDestroy() { for(Dialog dialog:new java.util.ArrayList<>(dialogs))dialog.dismiss();handler.removeCallbacksAndMessages(null); unregisterReceiver(permission); super.onDestroy(); }
 
     private class Icon extends View {
         private final String type; private final Paint paint=new Paint(Paint.ANTI_ALIAS_FLAG);

@@ -53,15 +53,16 @@ The dashboard has one primary action: start, resume, or pause. During an operati
 **Остановить передачу** cancels the active network request and stops USB reading
 between 256 KiB blocks. Unconfirmed queued files remain available for a later run.
 The foreground notification also has a stop action. Settings and
-diagnostics live in the toolbar; the journal expands on tap, and individual
-entries open in a detail dialog with a copy action.
+diagnostics live in the toolbar. The journal expands on tap as a single terminal-style view with local date/time stamps. Tap it
+to open the full console and copy the log. New entries receive timestamps at
+recording time; older saved entries are shown without invented timestamps.
 
 The UI is currently in Russian. Notification permission lets Android show the
 active transfer. Existing cached files can be sent without reconnecting the camera, subject to the current selection.
 
 <details>
 <summary><strong>See the Android interface</strong></summary>
-<p align="center"><img src="docs/android.png" alt="FujiRelay Android dashboard with cache limits and transfer controls" width="330"></p>
+<p align="center"><img src="docs/android.png" alt="FujiRelay Android dashboard with cache limits and transfer controls" width="300"> <img src="docs/terminal.png" alt="Timestamped terminal log" width="300"></p>
 </details>
 
 ## How the cache works
@@ -142,7 +143,7 @@ export ANDROID_HOME=/path/to/android-sdk
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
-Package: `dev.malordin.fuji.usb`. Version: `0.4.0`. A debug APK updates the original
+Package: `dev.malordin.fuji.usb`. Version: `0.4.1`. A debug APK updates the original
 USB importer when signed with the same local debug key. No signing secrets or
 Immich credentials belong in the repository.
 

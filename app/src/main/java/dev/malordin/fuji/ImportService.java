@@ -57,12 +57,13 @@ public class ImportService extends Service {
     }
     private void report(String text) {
         Log.i("FujiRelay", text);
-        history.append(text).append('\n');
+        String entry=SessionLog.format(text,java.time.Instant.now(),java.time.ZoneId.systemDefault());
+        history.append(entry);
         if (history.length() > 16000) history.delete(0, history.indexOf("\n", history.length() - 12000) + 1);
         status = history.toString();
         getSystemService(NotificationManager.class).notify(1, notification(text));
         try (FileOutputStream out = openFileOutput("last-import.log", MODE_APPEND)) {
-            out.write((text + "\n").getBytes(StandardCharsets.UTF_8));
+            out.write(entry.getBytes(StandardCharsets.UTF_8));
         } catch (IOException e) { Log.e("FujiRelay", "Writing log", e); }
     }
     private void stats() throws Exception {

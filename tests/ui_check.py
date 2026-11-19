@@ -23,7 +23,7 @@ def find(items, key, value):
     return next(n.attrib for n in items if n.get(key, "").casefold() == value.casefold())
 
 
-def main():
+def run_checks():
     services = adb("shell", "dumpsys", "activity", "services", "dev.malordin.fuji.usb")
     assert "ServiceRecord" not in services, "Finish the active transfer before running UI checks"
     adb("shell", "am", "force-stop", "dev.malordin.fuji.usb")
@@ -51,16 +51,13 @@ def main():
     header = find(items, "content-desc", "Журнал передачи")
     tap(header)
     items = nodes()
-    # Existing log entries are clickable; if this is a fresh installation, check its empty state.
-    log = set(adb("shell", "run-as", "dev.malordin.fuji.usb", "cat", "files/last-import.log").splitlines())
-    entries = [n for n in items if n.get("class") == "android.widget.TextView" and n.get("clickable") == "true" and n.get("text") in log]
-    if entries:
-        tap(entries[0].attrib)
-        detail = nodes()
-        find(detail, "text", "Копировать")
-        tap(find(detail, "text", "Закрыть"))
-    else:
-        find(items, "text", "Пока пусто")
+    console=find(items,"content-desc","Терминал журнала")
+    tap(console)
+    detail=nodes()
+    find(detail,"text","Копировать")
+    terminal=find(detail,"content-desc","Терминал журнала")
+    assert re.search(r"\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\]", terminal["text"]), "Run camera_check.py to create timestamped log entries"
+    tap(find(detail,"text","Закрыть"))
     # The header may move when expanded; fetch current coordinates.
     tap(find(nodes(), "content-desc", "Журнал передачи"))
     tap(find(nodes(), "content-desc", "Настройки"))
@@ -74,7 +71,19 @@ def main():
     find(menu, "text", "Обновить каталог")
     find(menu, "text", "Передать один кадр")
     adb("shell", "input", "keyevent", "4")
-    print("PASS: today/yesterday filters, manual photo choice survives restart, collapsible journal, settings, diagnostics; no upload")
+    print("PASS: today/yesterday filters, manual photo choice survives restart, terminal journal, settings, diagnostics; no upload")
+
+
+def main():
+    assert "ServiceRecord" not in adb("shell", "dumpsys", "activity", "services", "dev.malordin.fuji.usb"), "Finish the active transfer before UI checks"
+    saved = subprocess.run(["adb", "exec-out", "run-as", "dev.malordin.fuji.usb", "cat", "shared_prefs/photo-selection.xml"], capture_output=True, text=True)
+    original = saved.stdout if saved.returncode == 0 else '<?xml version="1.0" encoding="utf-8"?><map />'
+    try:
+        run_checks()
+    finally:
+        adb("shell", "am", "force-stop", "dev.malordin.fuji.usb")
+        subprocess.run(["adb", "shell", "run-as dev.malordin.fuji.usb sh -c 'cat > shared_prefs/photo-selection.xml'"], input=original, text=True, check=True)
+        adb("shell", "am", "start", "-n", "dev.malordin.fuji.usb/dev.malordin.fuji.MainActivity")
 
 
 if __name__ == "__main__":

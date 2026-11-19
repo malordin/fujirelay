@@ -144,6 +144,9 @@ public final class ProtocolCheck extends Instrumentation {
             expect(queue.file(stopped.key()).exists()&&!db.confirmed(stopped.key(),slowTarget),"Cancelled upload keeps cache without a receipt");
             expect((System.nanoTime()-stopAt)<2500_000_000L,"Network stop within 2.5 seconds");
             pass("Full stop interrupts stalled HTTP and retains unconfirmed cache");
+            String log=SessionLog.format("Первое\nВторое",java.time.Instant.parse("2026-11-18T21:45:01Z"),zone);
+            expect(log.equals("[2026-11-19 02:45:01] Первое\n[2026-11-19 02:45:01] Второе\n"),"Timestamp each message line in local time across midnight");
+            pass("Terminal timestamps: local date/time, multiline messages, midnight boundary");
             result.putString("stream", "\nPASS " + passed.size() + " checks\n" + String.join("\n", passed) + "\n");
             finish(-1, result);
         } catch (Throwable error) {

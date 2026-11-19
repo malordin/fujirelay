@@ -35,7 +35,8 @@ phone storage and explicit delivery receipts.
 - [ ] Network policy controls: Wi-Fi only / mobile data allowed.
 - [ ] Optional destination album in Immich.
 - [ ] A queue/history export button and redacted diagnostic export.
-- [ ] Accessibility pass with large fonts and TalkBack.
+- [x] Dialog bounds and keyboard checks in portrait/landscape, including 160% font scale.
+- [ ] TalkBack and broader device accessibility testing.
 
 ## After measuring the bottleneck
 
