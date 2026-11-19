@@ -37,12 +37,16 @@ test after configuring your server.
 1. Install an APK built from this repository.
 2. On the camera, choose **USB CARD READER** and set **USB POWER SUPPLY** to **OFF**.
 3. Connect a data-capable USB-C cable. Close other camera import apps and grant USB access.
-4. Open **Настройки Immich и кэша**. Enter your Immich URL and an API key with
+4. Tap the gear icon. Enter your Immich URL and an API key with
    `asset.upload`, `asset.read`, and `user.read` permissions. The app adds `/api`
    when the URL does not already end with it.
 5. Keep the default cache limits or choose smaller ones. Use HTTPS; HTTP requires
    an explicit opt-in for a trusted local network.
-6. Tap **Тест: передать один JPEG**, check the photo in Immich, then start the full relay.
+6. Tap **⋮ → Передать один кадр**, check the photo in Immich, then start the full relay.
+
+The dashboard has one primary action: start, resume, or pause. Settings and
+diagnostics live in the toolbar; the journal expands on tap, and individual
+entries open in a detail dialog with a copy action.
 
 The UI is currently in Russian. Notification permission lets Android show the
 active transfer. Existing cached files can be sent without reconnecting the camera.
@@ -67,7 +71,7 @@ The relay fills a batch up to the photo/byte limits, then sends and removes
 its files one by one. USB and network operations are currently sequential.
 If Immich is slower than the camera, the app waits instead of downloading beyond
 the budget. If the network or server fails, the run pauses with the remaining
-cache intact. Tap **Отправить оставшийся кэш** to retry it, or start the relay again.
+cache intact. Tap **Продолжить** to retry it. The main button sends the pending queue even without the camera.
 
 For each file, the app:
 
@@ -127,7 +131,7 @@ export ANDROID_HOME=/path/to/android-sdk
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
-Package: `dev.malordin.fuji.usb`. Version: `0.2.0`. A debug APK updates the original
+Package: `dev.malordin.fuji.usb`. Version: `0.3.0`. A debug APK updates the original
 USB importer when signed with the same local debug key. No signing secrets or
 Immich credentials belong in the repository.
 
@@ -136,6 +140,7 @@ Immich credentials belong in the repository.
 ```sh
 # Installed debug APK, one authorized phone, no active transfer:
 python3 tests/protocol_check.py
+python3 tests/ui_check.py
 
 # Optional real camera catalog check; grant USB access in the app first:
 python3 tests/camera_check.py

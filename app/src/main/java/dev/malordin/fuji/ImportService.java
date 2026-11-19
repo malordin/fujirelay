@@ -14,6 +14,9 @@ import java.util.*;
 public class ImportService extends Service {
     static volatile boolean busy, cancel;
     static volatile String status = "", phase = "Готов к подключению", cacheSummary = "", deliverySummary = "";
+    static volatile int cachedFiles, confirmedFiles;
+    static volatile long cachedBytes;
+    static volatile boolean failed;
     private final StringBuilder history = new StringBuilder();
     private static final String CHANNEL = "relay";
     private MtpDevice mtp;
@@ -27,7 +30,7 @@ public class ImportService extends Service {
     @Override public IBinder onBind(Intent intent) { return null; }
     @Override public int onStartCommand(Intent intent, int flags, int id) {
         if (busy) return START_NOT_STICKY;
-        busy = true; cancel = false; delivered = 0;
+        busy = true; cancel = false; delivered = 0; failed = false;
         history.setLength(0);
         getSystemService(NotificationManager.class).createNotificationChannel(
             new NotificationChannel(CHANNEL, "Передача в Immich", NotificationManager.IMPORTANCE_LOW));
@@ -53,6 +56,7 @@ public class ImportService extends Service {
         } catch (IOException e) { Log.e("FujiRelay", "Writing log", e); }
     }
     private void stats() throws Exception {
+        cachedFiles = queue.count(); cachedBytes = queue.bytes(); confirmedFiles = db.confirmedCount();
         cacheSummary = String.format(Locale.US, "%d фото · %.1f МиБ", queue.count(), queue.bytes() / (double)Settings.MIB);
         deliverySummary = delivered + " за этот запуск · " + db.confirmedCount() + " подтверждений в журнале";
     }
@@ -108,6 +112,7 @@ public class ImportService extends Service {
             report("Уже доставленные кадры пропущены: " + skipped);
             finish();
         } catch (Exception e) {
+            failed = true;
             phase = "Передача приостановлена";
             // Keep credentials and response bodies out of diagnostic logs.
             report("Ошибка: " + e.getClass().getSimpleName() + ": " + e.getMessage() + "\nНеподтверждённые фотографии остаются в кэше. Можно повторить передачу.");

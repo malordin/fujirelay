@@ -16,6 +16,11 @@ def main():
     adb("shell", "am", "start", "-n", PACKAGE + "/dev.malordin.fuji.MainActivity")
     adb("shell", "uiautomator", "dump", "/sdcard/fujirelay-check.xml")
     root = ET.fromstring(adb("shell", "cat", "/sdcard/fujirelay-check.xml"))
+    more = next(node for node in root.iter("node") if node.get("content-desc") == "Дополнительно")
+    x1, y1, x2, y2 = map(int, re.findall(r"\d+", more.get("bounds")))
+    adb("shell", "input", "tap", str((x1+x2)//2), str((y1+y2)//2))
+    adb("shell", "uiautomator", "dump", "/sdcard/fujirelay-check.xml")
+    root = ET.fromstring(adb("shell", "cat", "/sdcard/fujirelay-check.xml"))
     for node in root.iter("node"):
         if node.get("text") == "Проверить камеру":
             assert node.get("enabled") == "true", "Wait for the current transfer to finish"

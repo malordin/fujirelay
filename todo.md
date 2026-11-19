@@ -26,7 +26,7 @@ phone storage and explicit delivery receipts.
 ## Experience
 
 - [ ] English localization and Android string resources.
-- [ ] A compact progress panel with camera, queue, and server counts.
+- [x] Compact dashboard with one start/resume/pause action, toolbar settings, and a collapsible journal.
 - [ ] Network policy controls: Wi-Fi only / mobile data allowed.
 - [ ] Optional destination album in Immich.
 - [ ] A queue/history export button and redacted diagnostic export.

@@ -1,5 +1,18 @@
 # Verification notes
 
+## 2026-11-19 · 0.3.0 interface
+
+- Build and Android lint passed; the updated APK was installed on Pixel 7 Pro.
+- All 21 queue/protocol checks passed after adding the dashboard's numeric state.
+- `python3 tests/ui_check.py` passed on the real phone: one primary action,
+  collapsed/expanded journal, clickable entries with copy action, settings
+  navigation, and diagnostics in the overflow menu. The test sends no photos
+  and does not change server settings.
+- Camera discovery was retained; the main action automatically chooses queued
+  upload when the camera is absent and pending files exist. During an active
+  operation, it requests a pause after the current operation completes.
+- The real Immich deployment remains pending configuration as noted below.
+
 ## 2026-11-19 · 0.2.0
 
 | Check | Result |
